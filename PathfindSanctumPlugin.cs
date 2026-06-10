@@ -1,3 +1,5 @@
+using System;
+using System.Numerics;
 using ExileCore2;
 using ImGuiNET;
 
@@ -33,6 +35,10 @@ public class PathfindSanctumPlugin : BaseSettingsPlugin<PathfindSanctumSettings>
             return;
 
         var currentArea = GameController.Area?.CurrentArea;
+        var rawAreaName = currentArea?.Area?.RawName;
+        if (rawAreaName == null || !rawAreaName.StartsWith("Sanctum", StringComparison.OrdinalIgnoreCase))
+            return;
+
         if (
             currentArea?.Area?.RawName == "G2_13"
             || currentArea?.IsHideout == true
@@ -53,7 +59,10 @@ public class PathfindSanctumPlugin : BaseSettingsPlugin<PathfindSanctumSettings>
         if (floorWindow == null || !floorWindow.IsVisible)
             return;
 
-        stateTracker.UpdateRoomStates(floorWindow);
+        var controllerOffset = GameController.IsUsingController
+            ? new Vector2(Settings.ControllerSettings.OffsetX, Settings.ControllerSettings.OffsetY)
+            : Vector2.Zero;
+        stateTracker.UpdateRoomStates(floorWindow, GameController.IsUsingController, controllerOffset);
         UpdateAndRenderPath();
     }
 

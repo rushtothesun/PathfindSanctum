@@ -1,54 +1,55 @@
 using System.Collections.Generic;
 using System.Numerics;
 using ExileCore2.Shared;
+using ExileCore2.PoEMemory.Elements.Sanctum;
 
 namespace PathfindSanctum;
 
 /// <summary>
-/// Handles the extraction and organization of Sanctum room data from the game's UI elements until floorWindow.RoomsByLayer is available
+/// Handles the extraction and organization of Sanctum room data from the game's UI elements.
+/// Uses memory-based parsing via SanctumRoomElement for both KB/M and Controller modes.
 /// </summary>
 public class RoomsByLayerFromUI
 {
     #region Mappings
 
-    private static readonly Dictionary<string, string> RewardMapping =
+    /// <summary>
+    /// Maps raw FightRoom.RoomType.Id values from game memory to the display names
+    /// used by the pathfinder weight system.
+    /// </summary>
+    private static readonly Dictionary<string, string> MemoryRoomTypeMapping =
         new()
         {
-            { "Awards a Large Sacred Water Fountain", "Large Fountain" },
-            { "Awards a Sacred Water Fountain", "Fountain" },
-            {
-                "Awards a Pledge which can be accepted to change the Trial's Parameters",
-                "Pledge to Kochai"
-            },
-            { "Awards a Shrine to restore Honour and gain Sacred Water", "Honour Halani" },
-            {
-                "Awards a Shrine that greatly restores Honour and burdens you with an Affliction",
-                "Honour Ahkeli"
-            },
-            { "Awards a Shrine that bestows the fickle Blessings of the Wind", "Honour Galai" },
-            { "Awards a Shrine to restore Honour", "Honour Tabana" },
-            { "Awards a Shrine that restores Honour and grants you a Boon", "Honour Orbala" },
-            { "Contains Merchant", "Merchant" },
-            { "Awards Bronze Key", "Bronze Key" },
-            { "Awards Silver Key", "Silver Key" },
-            { "Awards Gold Key", "Gold Key" },
-            { "Awards a Bronze Cache. Requires a Bronze Key to Open", "Bronze Cache" },
-            { "Awards a Silver Cache. Requires a Silver Key to Open", "Silver Cache" },
-            { "Awards a Gold Cache. Requires a Gold Key to Open", "Gold Cache" }
+            { "Explore", "Escape" },
+            { "Lair", "Chalice" },
+            { "PortalArena", "Ritual" },
+            { "Gauntlet", "Gauntlet" },
+            { "TimerArena", "Hourglass" },
+            { "Boss", "Boss" }
         };
 
-    private static readonly Dictionary<string, string> RoomTypeMapping =
+    /// <summary>
+    /// Maps raw RewardRoom.RoomType.Id values from game memory to the display names
+    /// used by the pathfinder weight system.
+    /// </summary>
+    private static readonly Dictionary<string, string> MemoryRewardMapping =
         new()
         {
-            { "Chalice Trial", "Chalice" },
-            { "Escape Trial", "Escape" },
-            { "Ritual Trial", "Ritual" },
-            { "Gauntlet Trial", "Gauntlet" },
-            { "Hourglass Trial", "Hourglass" },
-            { "Collapsing Cavern", "Boss" },
-            { "Ceremonial Chamber", "Boss" },
-            { "Sand Pit", "Boss" },
-            { "Outside of Time", "Boss" }
+            { "WaterMajor", "Large Fountain" },
+            { "WaterMinor", "Fountain" },
+            { "LegendPledge", "Pledge to Kochai" },
+            { "LegendWater", "Honour Halani" },
+            { "LegendCurse", "Honour Ahkeli" },
+            { "LegendBoon", "Honour Orbala" },
+            { "LegendRandom", "Honour Galai" },
+            { "LegendHonor", "Honour Tabana" },
+            { "Merchant", "Merchant" },
+            { "BronzeKey", "Bronze Key" },
+            { "SilverKey", "Silver Key" },
+            { "GoldKey", "Gold Key" },
+            { "BronzeKeyChest", "Bronze Cache" },
+            { "SilverKeyChest", "Silver Cache" },
+            { "GoldKeyChest", "Gold Cache" }
         };
 
     #endregion
@@ -63,7 +64,7 @@ public class RoomsByLayerFromUI
 
         public RectangleF GetClientRect() => ClientRect;
 
-        public void UpdateFromTooltip(string roomType, string affliction, string reward)
+        public void Update(string roomType, string affliction, string reward)
         {
             if (roomType != null)
                 Data.FightRoom = new FightRoom { RoomType = new RoomType { Id = roomType } };
@@ -109,16 +110,44 @@ public class RoomsByLayerFromUI
 
     #endregion
 
-    public static List<List<FakeSanctumRoomElement>> GetRoomsByLayer(dynamic floorWindow)
+    // KB/M baseline: where the layers container sits relative to floorWindow at 1440p (scale 1.0).
+    // At 1080p the scroll width is 1525.5 (scale 0.75).
+    // In controller mode the container shifts horizontally but not vertically.
+    // These are the KB/M design-time positions used to compute the correction delta.
+    private const float BaselineDesignWidth = 2034.0f;
+    private const float BaselineRelativeX = 369.7f;
+    private const float BaselineRelativeY = 151.4f;
+
+    /// <summary>
+    /// Extracts room data organized by layer from the Sanctum floor window.
+    /// In KB/M mode, the native RoomsByLayer property reads children at path 0/0/1.
+    /// In Controller mode, 0/0/1 points to the Legend Display Panel instead of room layers,
+    /// so we must manually traverse to 0/0/0/1 to reach the real grid container.
+    /// </summary>
+    public static List<List<FakeSanctumRoomElement>> GetRoomsByLayer(SanctumFloorWindow floorWindow, bool isController, Vector2 manualOffset)
     {
         var result = new List<List<FakeSanctumRoomElement>>();
 
-        var layersContainer = floorWindow
-            ?.GetChildAtIndex(0)
-            ?.GetChildAtIndex(0)
-            ?.GetChildAtIndex(1);
+        var layersContainer = isController
+            ? floorWindow
+                ?.GetChildAtIndex(0)
+                ?.GetChildAtIndex(0)
+                ?.GetChildAtIndex(0)
+                ?.GetChildAtIndex(1)
+            : floorWindow
+                ?.GetChildAtIndex(0)
+                ?.GetChildAtIndex(0)
+                ?.GetChildAtIndex(1);
+
         if (layersContainer == null)
             return result;
+
+        // Compute the rect correction offset once per call.
+        // In controller mode, the UI tree shifts the layers container horizontally
+        // relative to floorWindow compared to KB/M. We measure the delta so the
+        // overlay frames align with the visual room icons.
+        // In KB/M mode this naturally computes to (0, 0).
+        var rectOffset = ComputeRectOffset(floorWindow, layersContainer, manualOffset);
 
         // For each layer
         for (int i = 0; i < layersContainer.Children.Count; i++)
@@ -126,10 +155,10 @@ public class RoomsByLayerFromUI
             var layer = new List<FakeSanctumRoomElement>();
             var layerElement = layersContainer.Children[i];
 
-            // For each room
+            // For each room in the layer
             foreach (var roomElement in layerElement.Children)
             {
-                var room = ProcessRoomElement(roomElement);
+                var room = ProcessRoomElement(floorWindow, roomElement, rectOffset);
                 layer.Add(room);
             }
 
@@ -139,84 +168,82 @@ public class RoomsByLayerFromUI
         return result;
     }
 
-    private static FakeSanctumRoomElement ProcessRoomElement(dynamic roomElement)
+    /// <summary>
+    /// Computes the offset between the layers container's actual position relative to
+    /// floorWindow and its expected KB/M baseline position (scaled for current resolution).
+    /// This avoids window-centering math entirely — floorWindow is the anchor.
+    /// </summary>
+    private static Vector2 ComputeRectOffset(SanctumFloorWindow floorWindow, ExileCore2.PoEMemory.Element layersContainer, Vector2 manualOffset)
     {
+        var scrollRect = floorWindow.GetClientRect();
+        var layersRect = layersContainer.GetClientRect();
+        float uiScale = scrollRect.Width / BaselineDesignWidth;
+
+        // Where the layers container actually is, relative to the scroll
+        float actualRelX = layersRect.Left - scrollRect.Left;
+        float actualRelY = layersRect.Top - scrollRect.Top;
+
+        // Where it should be based on KB/M design baseline
+        float expectedRelX = BaselineRelativeX * uiScale;
+        float expectedRelY = BaselineRelativeY * uiScale;
+
+        return new Vector2(
+            actualRelX - expectedRelX + manualOffset.X,
+            actualRelY - expectedRelY + manualOffset.Y);
+    }
+
+    /// <summary>
+    /// Wraps a UI room element as a SanctumRoomElement to read room type, reward,
+    /// and affliction data directly from game memory instead of parsing tooltips.
+    /// </summary>
+    private static FakeSanctumRoomElement ProcessRoomElement(
+        SanctumFloorWindow floorWindow,
+        ExileCore2.PoEMemory.Element roomElement,
+        Vector2 rectOffset)
+    {
+        var rect = roomElement.GetClientRect();
+
+        // Apply the controller mode rect correction (zero in KB/M mode)
+        if (rectOffset != Vector2.Zero)
+        {
+            rect = new RectangleF(rect.X - rectOffset.X, rect.Y - rectOffset.Y, rect.Width, rect.Height);
+        }
+
         var sanctumRoom = new FakeSanctumRoomElement
         {
-            ClientRect = roomElement.GetClientRect(),
-            Position = roomElement.GetClientRect().TopLeft
+            ClientRect = rect,
+            Position = rect.TopLeft
         };
 
-        if (roomElement?.Tooltip?.Children == null || roomElement.Tooltip.Children.Count == 0)
-        {
-            sanctumRoom.UpdateFromTooltip(null, null, null);
-            return sanctumRoom;
-        }
+        // Instantiate the UI element as a SanctumRoomElement to access memory-backed data
+        var sanctumRoomElem = floorWindow.GetObject<SanctumRoomElement>(roomElement.Address);
+        var memoryData = sanctumRoomElem?.Data;
 
-        var tooltipTexts = ExtractTooltipTexts(roomElement);
-        var tooltipInfo = ParseTooltipInformation(tooltipTexts);
-        string roomType = tooltipInfo.Item1;
-        string affliction = tooltipInfo.Item2;
-        string reward = tooltipInfo.Item3;
-        sanctumRoom.UpdateFromTooltip(roomType, affliction, reward);
+        if (memoryData != null)
+        {
+            string roomType = null;
+            string reward = null;
+            string affliction = memoryData.RoomEffect?.ReadableName;
+
+            var rawRoomType = memoryData.FightRoom?.RoomType?.Id;
+            if (rawRoomType != null)
+            {
+                MemoryRoomTypeMapping.TryGetValue(rawRoomType, out roomType);
+            }
+
+            var rawReward = memoryData.RewardRoom?.RoomType?.Id;
+            if (rawReward != null)
+            {
+                MemoryRewardMapping.TryGetValue(rawReward, out reward);
+            }
+
+            sanctumRoom.Update(roomType, affliction, reward);
+        }
+        else
+        {
+            sanctumRoom.Update(null, null, null);
+        }
 
         return sanctumRoom;
-    }
-
-    private static List<string> ExtractTooltipTexts(dynamic roomElement)
-    {
-        var tooltipTexts = new List<string>();
-
-        if (roomElement?.Tooltip?.Children == null)
-            return tooltipTexts;
-
-        foreach (var tooltipChild in roomElement.Tooltip.Children)
-        {
-            if (tooltipChild?.Children == null)
-                continue;
-
-            foreach (var textChild in tooltipChild.Children)
-            {
-                var text = textChild?.Text;
-                if (!string.IsNullOrEmpty(text))
-                {
-                    tooltipTexts.Add(text);
-                }
-            }
-        }
-
-        return tooltipTexts;
-    }
-
-    private static (string roomType, string affliction, string reward) ParseTooltipInformation(
-        List<string> tooltipTexts
-    )
-    {
-        string roomType = null;
-        string affliction = null;
-        string reward = null;
-
-        foreach (var tooltipText in tooltipTexts)
-        {
-            if (RewardMapping.TryGetValue(tooltipText, out var mappedReward))
-            {
-                reward = mappedReward;
-            }
-            else if (tooltipText.Contains("<sanctumcurse>"))
-            {
-                var startBrace = tooltipText.IndexOf('{');
-                var endBrace = tooltipText.IndexOf('}');
-                if (startBrace >= 0 && endBrace > startBrace)
-                {
-                    affliction = tooltipText[(startBrace + 1)..endBrace];
-                }
-            }
-            else if (RoomTypeMapping.TryGetValue(tooltipText, out var mappedRoomType))
-            {
-                roomType = mappedRoomType;
-            }
-        }
-
-        return (roomType, affliction, reward);
     }
 }

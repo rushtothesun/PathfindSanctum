@@ -32,17 +32,16 @@ public class SanctumStateTracker
         return currentAreaHash == newAreaHash;
     }
 
-    public void UpdateRoomStates(SanctumFloorWindow floorWindow)
+    public void UpdateRoomStates(SanctumFloorWindow floorWindow, bool isController, System.Numerics.Vector2 manualOffset)
     {
-        // FIXME: Use floorWindow.RoomsByLayer once it is available.
-        this.roomsByLayer = RoomsByLayerFromUI.GetRoomsByLayer(floorWindow);
+        this.roomsByLayer = RoomsByLayerFromUI.GetRoomsByLayer(floorWindow, isController, manualOffset);
         if (roomsByLayer == null || roomsByLayer.Count == 0)
         {
             return;
         }
 
         // Update Layout Data (null-safe)
-        var floorData = floorWindow?.FloorData;
+        var floorData = GetSanctumFloorData(floorWindow, isController);
         if (floorData == null)
         {
             return;
@@ -96,6 +95,30 @@ public class SanctumStateTracker
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// In KB/M mode, FloorData is read natively from SanctumFloorWindow (offset 0x30).
+    /// In Controller mode, 0x30 is invalid; the active selector lives at offset 0x7C8.
+    /// This workaround is needed until ExileCore2 natively handles controller mode.
+    /// </summary>
+    private static SanctumFloorData GetSanctumFloorData(SanctumFloorWindow floorWindow, bool isController)
+    {
+        if (floorWindow == null) return null;
+
+        if (!isController)
+        {
+            return floorWindow.FloorData;
+        }
+
+        var selectorAddress = floorWindow.M.Read<long>(floorWindow.Address + 0x7C8);
+        if (selectorAddress == 0)
+        {
+            return null;
+        }
+
+        var selector = floorWindow.GetObject<SanctumFloorWindowDataSelector>(selectorAddress);
+        return selector?.FloorData;
     }
 
     public void Reset(uint newAreaHash)

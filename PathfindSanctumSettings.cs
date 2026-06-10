@@ -33,6 +33,9 @@ public class PathfindSanctumSettings : ISettings {
     [Menu("Debug Settings")]
     public DebugSettings DebugSettings { get; set; } = new DebugSettings();
 
+    [Menu("Controller UI Settings")]
+    public ControllerSettings ControllerSettings { get; set; } = new ControllerSettings();
+
     [JsonIgnore]
     internal ProfileManager ProfileManager { get; private set; }
 
@@ -326,4 +329,13 @@ public class DebugSettings {
 
     [Menu("Debug Font Size")]
     public RangeNode<float> DebugFontSizeMultiplier { get; set; } = new RangeNode<float>(1.0f, 0.5f, 2f);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class ControllerSettings {
+    [Menu("X Offset", "Horizontal offset adjustment for controller UI room highlights (pixels)")]
+    public RangeNode<float> OffsetX { get; set; } = new RangeNode<float>(0f, -200f, 200f);
+
+    [Menu("Y Offset", "Vertical offset adjustment for controller UI room highlights (pixels)")]
+    public RangeNode<float> OffsetY { get; set; } = new RangeNode<float>(0f, -200f, 200f);
 }
